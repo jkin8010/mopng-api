@@ -81,7 +81,7 @@ uv run python -m pytest tests/test_mopng_api.py -v
 
 ## API 文档
 
-详见 [qise.cc/agent/docs](https://qise.cc/agent/docs)
+详见 [qise.cc/agent](https://qise.cc/agent)
 
 ## 许可证
 
