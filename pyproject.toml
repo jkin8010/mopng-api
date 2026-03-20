@@ -1,0 +1,9 @@
+[project]
+name = "mopng-api"
+version = "0.1.0"
+description = "MoPNG API Skill for OpenClaw"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+dev-dependencies = []
