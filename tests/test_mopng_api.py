@@ -71,6 +71,32 @@ class TestPrepareOutputPath(unittest.TestCase):
             self.assertEqual(out, safe / "abs.png")
 
 
+class TestUrlValidation(unittest.TestCase):
+    """User-supplied image URLs and result download URL checks"""
+
+    def test_user_url_accepts_mopng_https(self):
+        api._validate_user_image_url("https://cdn.mopng.cn/foo/bar.png")
+
+    def test_user_url_rejects_non_https(self):
+        with self.assertRaises(ValueError):
+            api._validate_user_image_url("http://img.mopng.cn/x.png")
+
+    def test_user_url_rejects_unknown_host(self):
+        with self.assertRaises(ValueError):
+            api._validate_user_image_url("https://evil.example/x.png")
+
+    def test_user_url_rejects_credentials(self):
+        with self.assertRaises(ValueError):
+            api._validate_user_image_url("https://user:pass@img.mopng.cn/x.png")
+
+    def test_download_rejects_private_ip(self):
+        with self.assertRaises(ValueError):
+            api._validate_result_download_url("https://127.0.0.1/s.png")
+
+    def test_download_accepts_public_https(self):
+        api._validate_result_download_url("https://cdn.example.com/out.png")
+
+
 class TestWorkspaceUtils(unittest.TestCase):
     """Test workspace utilities"""
     
