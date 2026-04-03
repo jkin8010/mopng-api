@@ -12,19 +12,12 @@ metadata:
 
 # mopng-api
 
-使用 mopng.cn (MoPNG) 的 OpenAPI 进行多种图片处理任务。
+使用 mopng.cn 的 OpenAPI 进行多种图片处理任务。
 
-## API key setup
+## API Key 配置
 
-1. 登录 [mopng.cn/agent](https://mopng.cn/agent) 获取 API Key
-2. **OpenClaw**：在 `openclaw.json` 的 `env` 中设置 `MOPNG_API_KEY`
-3. **Claude Code**：
-   - 执行 `/skill add https://github.com/jkin8010/mopng-api/blob/main/SKILL.md`
-   - 按上一步在控制台创建并复制 API Key
-   - 在对话中输入：`在全局环境中 MOPNG_API_KEY='你的密钥'`（引号内换成真实 Key；勿写入仓库或提交 Git）
-   - 测试文生图：在对话中输入 `text-to-image --prompt '一只猫咪' --output ./cat.jpg`
-
-更完整的说明见仓库根目录 `README.md` 的「Claude Code」小节。
+1. 登录 https://mopng.cn/agent 获取 API Key
+2. 在 OpenClaw 配置中设置 `MOPNG_API_KEY`
 
 ## 功能列表
 
@@ -37,107 +30,144 @@ metadata:
 | 文生图 | `text-to-image` | 按量计费 |
 | 图生图 | `image-to-image` | 按量计费 |
 
-## 使用方法
+## Claude 命令使用指南
 
 ### 智能抠图 (remove-bg)
 
-```bash
-uv run scripts/mopng_api.py remove-bg --input ./photo.jpg --output ./result.png
+
+**基本用法：**
+```
+remove-bg ./photo.jpg
 ```
 
-选项：
-- `--output-format png|jpg` (默认: png)
+**指定输出路径：**
+```
+remove-bg ./photo.jpg --output ./result.png
+```
+
+**选项说明：**
+- `--output ./result.png` 指定输出路径
+- `--output-format png|jpg` 输出格式（默认: png）
 - `--return-mask` 返回蒙版
 - `--only-mask` 仅返回蒙版
-- `--async-mode` 异步模式（需轮询）
+- `--async-mode` 异步模式（大文件建议使用）
+
+---
 
 ### 高清放大 (upscale)
 
-```bash
-uv run scripts/mopng_api.py upscale --input ./photo.jpg --output ./result.png --scale 2
+**基本用法（2倍放大）：**
+```
+upscale ./photo.jpg
 ```
 
-选项：
-- `--scale 2|4` 放大倍数 (默认: 2)
-- `--tile-size` 瓦片大小 (默认: 0)
-- `--tile-pad` 瓦片填充 (默认: 10)
-- `--output-format png|jpg`
-- `--async-mode`
+**指定放大倍数：**
+```
+upscale ./photo.jpg --scale 4 --output ./result.png
+```
+
+**选项说明：**
+- `--scale 2|4` 放大倍数（默认: 2）
+- `--tile-size 192` 瓦片大小（默认: 0）
+- `--tile-pad 24` 瓦片填充（默认: 10）
+- `--output-format png|jpg` 输出格式
+- `--async-mode` 异步模式（建议使用）
+
+---
 
 ### 智能扩图 (outpainting)
 
-```bash
-uv run scripts/mopng_api.py outpainting --input ./photo.jpg --output ./result.png --direction all --expand-ratio 0.5
+**基本用法：**
+```
+outpainting ./photo.jpg
 ```
 
-选项：
-- `--direction all|up|down|left|right` 扩展方向 (默认: all)
-- `--expand-ratio` 扩展比例 0.1-1.0 (默认: 0.5)
-- `--angle` 旋转角度 (默认: 0)
+**指定扩展方向：**
+```
+outpainting ./photo.jpg --direction all --expand-ratio 0.5 --output ./result.png
+```
+
+**选项说明：**
+- `--direction all|up|down|left|right` 扩展方向（默认: all）
+- `--expand-ratio 0.1-1.0` 扩展比例（默认: 0.5）
+- `--angle 0` 旋转角度
 - `--best-quality` 最佳质量
+
+---
 
 ### 图片翻译 (translation)
 
-```bash
-uv run scripts/mopng_api.py translation --input ./photo.jpg --output ./result.png --target-language en
+**基本用法：**
+```
+translation ./photo.jpg --target-language en
 ```
 
-选项：
-- `--source-language` 源语言 (默认: auto)
-- `--target-language` 目标语言，如 en, zh, ja, ko 等 (必填)
+**选项说明：**
+- `--target-language` 目标语言（必填），如 en, zh, ja, ko
+- `--source-language` 源语言（默认: auto）
 - `--domain-hint` 领域提示
 - `--sensitive-word-filter` 敏感词过滤
 
+---
+
 ### 文生图 (text-to-image)
 
-```bash
-uv run scripts/mopng_api.py text-to-image --prompt "一只红嘴蓝鹊站在树枝上" --output ./result.png --model wanx-v2.5
+**基本用法：**
+```
+text-to-image --prompt "一只红嘴蓝鹊站在树枝上"
 ```
 
-选项：
-- `--prompt` 提示词 (必填)
-- `--model` 模型名称 (默认: wanx-v2.5)
-- `--negative-prompt` 负面提示词
-- `--width/--height` 图片尺寸
-- `--n` 生成数量
+**指定输出路径：**
+```
+text-to-image --prompt "一只可爱的猫咪" --output ./cat.png
+```
+
+**选项说明：**
+- `--prompt "描述"` 提示词（必填）
+- `--model wanx-v2.5` 模型名称（默认: wanx-v2.5）
+- `--negative-prompt "描述"` 负面提示词
+- `--width 1024 --height 1024` 图片尺寸
+- `--n 1` 生成数量
+
+---
 
 ### 图生图 (image-to-image)
 
-```bash
-uv run scripts/mopng_api.py image-to-image --input ./photo.jpg --prompt "把天空变成日落金色" --output ./result.png --model wanx-v2.5
+**基本用法：**
+```
+image-to-image --input ./photo.jpg --prompt "把天空变成日落金色"
 ```
 
-选项：
-- `--prompt` 编辑提示词 (必填)
-- `--model` 模型名称 (默认: wanx-v2.5)
-- `--negative-prompt` 负面提示词
-- `--strength` 编辑强度
+**选项说明：**
+- `--input ./photo.jpg` 输入图片路径（必填）
+- `--prompt "描述"` 编辑提示词（必填）
+- `--model wanx-v2.5` 模型名称（默认: wanx-v2.5）
+- `--negative-prompt "描述"` 负面提示词
+- `--strength 0.7` 编辑强度（0.0-1.0，越大变化越大）
+- `--width/--height` 输出尺寸
+
+---
+
+### 查看可用模型
+
+```
+list-models --type text_to_image
+```
+
+---
 
 ## 安全约束
 
-- `--input` 必须是 OpenClaw 工作区内的真实图片文件
+- `--input` 必须是工作区内的真实图片文件
 - 允许的输入格式: `.png`, `.jpg`, `.jpeg`, `.webp`
-- `--output` 最终必须位于 `outputs/mopng-api/` 下；写法为相对路径（如 `./cat.jpg`）时会自动落到该目录
+- `--output` 建议位于工作区目录下
 - 大文件会被拒绝（大小和尺寸限制）
 
 ## 异步任务
 
-当使用 `--async-mode` 时，首次响应可能状态为 pending/processing。脚本会自动轮询直到任务完成。
+当任务需要较长时间处理时，会自动进入异步模式。系统会轮询直到任务完成。
 
-轮询间隔：2-5 秒
-
-## 输出
-
-- 结果文件写入 `--output` 指定路径
-- 打印 `MEDIA:` 行用于聊天工作流
-
-## 模型发现
-
-文生图/图生图前，可以先查询可用模型：
-
-```bash
-uv run scripts/mopng_api.py list-models --type text_to_image
-```
+**轮询间隔：** 2-5 秒
 
 ## 注意事项
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib import error, request, parse
 
 BASE_URL = "https://mo-api.mopng.cn"
+UPSCALE_URL = "https://mo-api.mopng.cn"
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_BYTES = 25 * 1024 * 1024
 MAX_DIMENSION = 12000
@@ -139,10 +140,10 @@ def _validate_input_image(path: Path) -> bytes:
     return data
 
 
-def _api_request(method: str, endpoint: str, api_key: str, data: dict | None = None, 
-                 files: dict | None = None, timeout: int = 90) -> dict:
+def _api_request(method: str, endpoint: str, api_key: str, data: dict | None = None,
+                 files: dict | None = None, timeout: int = 90, base_url: str = BASE_URL) -> dict:
     """Make API request with proper auth"""
-    url = f"{BASE_URL}{endpoint}"
+    url = f"{base_url}{endpoint}"
     headers = {"Authorization": f"Bearer {api_key}"}
     
     if files:
@@ -196,13 +197,13 @@ def _upload_image(image_path: Path, api_key: str) -> str:
     resp = _api_request("POST", "/api/v1/images/upload", api_key, files=files)
     if resp.get("code") != 0:
         raise RuntimeError(f"Upload failed: {resp.get('message', 'unknown error')}")
-    return resp["data"].get("signedUrl") or resp["data"].get("signed_url")
+    return resp["data"].get("signed_url") or resp["data"].get("signedUrl")
 
 
-def _poll_task(endpoint: str, task_id: str, api_key: str, max_retries: int = 60, interval: int = 2) -> dict:
+def _poll_task(endpoint: str, task_id: str, api_key: str, max_retries: int = 60, interval: int = 2, base_url: str = BASE_URL) -> dict:
     """Poll async task until complete or failed"""
     for i in range(max_retries):
-        resp = _api_request("GET", f"{endpoint}/{task_id}", api_key)
+        resp = _api_request("GET", f"{endpoint}/{task_id}", api_key, base_url=base_url)
         data = resp.get("data", {})
         status = data.get("status", "unknown")
         
@@ -241,8 +242,7 @@ def cmd_remove_bg(args, api_key: str, workspace: Path, safe_output_root: Path) -
     resp = _api_request("POST", "/api/v1/open/image/remove-bg", api_key, data=data)
     result = resp.get("data", {})
     
-    # Poll if task is pending/processing
-    if result.get("status") in ("pending", "processing"):
+    if args.async_mode and result.get("status") in ("pending", "processing"):
         task_id = result.get("task_id")
         print(f"Task {task_id} is {result.get('status')}, polling...")
         result = _poll_task("/api/v1/open/image/tasks", task_id, api_key)
@@ -251,9 +251,8 @@ def cmd_remove_bg(args, api_key: str, workspace: Path, safe_output_root: Path) -
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
     
-    # Download result - API uses camelCase
-    result_data = result.get("result", {})
-    image_url = result_data.get("imageUrl") or result_data.get("image_url")
+    # Download result
+    image_url = result.get("result", {}).get("imageUrl") or result.get("result", {}).get("image_url")
     if not image_url:
         print("No result image URL", file=sys.stderr)
         return 1
@@ -266,38 +265,37 @@ def cmd_remove_bg(args, api_key: str, workspace: Path, safe_output_root: Path) -
 def cmd_upscale(args, api_key: str, workspace: Path, safe_output_root: Path) -> int:
     """Upscale image"""
     in_path, out_path = _prepare_paths(args, workspace, safe_output_root)
-    
+
     image_url = _upload_image(in_path, api_key) if not str(args.input).startswith("http") else args.input
-    
+
+    # Use camelCase for this endpoint
     data = {
-        "image_url": image_url,
+        "imageUrl": image_url,
         "scale": args.scale,
-        "tile_size": args.tile_size,
-        "tile_pad": args.tile_pad,
-        "output_format": args.output_format,
-        "async_mode": args.async_mode
+        "tileSize": args.tile_size,
+        "tilePad": args.tile_pad,
+        "outputFormat": args.output_format,
+        "asyncMode": args.async_mode
     }
-    
-    resp = _api_request("POST", "/api/v1/open/image/upscale", api_key, data=data)
+
+    resp = _api_request("POST", "/api/v1/ai/tools/upscale/photo", api_key, data=data, base_url=UPSCALE_URL)
     result = resp.get("data", {})
-    
-    # Poll if task is pending/processing
-    if result.get("status") in ("pending", "processing"):
-        task_id = result.get("task_id")
+
+    if args.async_mode and result.get("status") in ("pending", "processing"):
+        task_id = result.get("taskId") or result.get("task_id")
         print(f"Task {task_id} is {result.get('status')}, polling...")
-        result = _poll_task("/api/v1/open/image/tasks", task_id, api_key)
-    
+        result = _poll_task("/api/v1/ai/tools/tasks", task_id, api_key, base_url=UPSCALE_URL)
+
     if result.get("status") != "completed":
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
-    
-    # API uses camelCase
-    result_data = result.get("result", {})
-    image_url = result_data.get("imageUrl") or result_data.get("image_url")
+
+    # Handle camelCase result.imageUrl
+    image_url = result.get("result", {}).get("imageUrl") or result.get("result", {}).get("image_url")
     if not image_url:
         print("No result image URL", file=sys.stderr)
         return 1
-    
+
     _download_image(image_url, out_path)
     _print_result(out_path)
     return 0
@@ -323,28 +321,16 @@ def cmd_outpainting(args, api_key: str, workspace: Path, safe_output_root: Path)
     resp = _api_request("POST", "/api/v1/open/image/outpainting", api_key, data=data)
     result = resp.get("data", {})
     
-    # Check for immediate error
-    if result.get("code") != 0 and result.get("code") is not None:
+    if result.get("code") != 0:
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
     
-    # Poll if task is pending/processing - outpainting uses ai/generations endpoint
-    if result.get("status") in ("pending", "processing"):
-        task_id = result.get("task_id")
-        print(f"Task {task_id} is {result.get('status')}, polling...")
-        result = _poll_task("/api/v1/open/ai/generations", task_id, api_key)
-    
-    if result.get("status") != "completed":
-        print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
+    image_url = result.get("image_url")
+    if not image_url:
+        print("No result image URL", file=sys.stderr)
         return 1
     
-    # Get result image URL - API uses results array like text-to-image
-    images = result.get("results", [])
-    if not images:
-        print("No result images", file=sys.stderr)
-        return 1
-    
-    _download_image(images[0]["url"], out_path)
+    _download_image(image_url, out_path)
     _print_result(out_path)
     return 0
 
@@ -369,28 +355,16 @@ def cmd_translation(args, api_key: str, workspace: Path, safe_output_root: Path)
     resp = _api_request("POST", "/api/v1/open/image/translation", api_key, data=data)
     result = resp.get("data", {})
     
-    # Check for immediate error
-    if result.get("code") != 0 and result.get("code") is not None:
+    if result.get("code") != 0:
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
     
-    # Poll if task is pending/processing - translation uses ai/generations endpoint
-    if result.get("status") in ("pending", "processing"):
-        task_id = result.get("task_id")
-        print(f"Task {task_id} is {result.get('status')}, polling...")
-        result = _poll_task("/api/v1/open/ai/generations", task_id, api_key)
-    
-    if result.get("status") != "completed":
-        print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
+    image_url = result.get("image_url")
+    if not image_url:
+        print("No result image URL", file=sys.stderr)
         return 1
     
-    # Get result image URL - API uses results array
-    images = result.get("results", [])
-    if not images:
-        print("No result images", file=sys.stderr)
-        return 1
-    
-    _download_image(images[0]["url"], out_path)
+    _download_image(image_url, out_path)
     _print_result(out_path)
     return 0
 
@@ -417,7 +391,7 @@ def cmd_text_to_image(args, api_key: str, workspace: Path, safe_output_root: Pat
     resp = _api_request("POST", "/api/v1/open/ai/generations", api_key, data=data)
     result = resp.get("data", {})
     
-    job_id = result.get("jobId") or result.get("job_id") or result.get("task_id")
+    job_id = result.get("job_id") or result.get("task_id") or result.get("jobId")
     if not job_id:
         print("No job ID returned", file=sys.stderr)
         return 1
@@ -430,8 +404,20 @@ def cmd_text_to_image(args, api_key: str, workspace: Path, safe_output_root: Pat
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
     
-    # Get result images - API returns "results" array
-    images = result.get("results", [])
+    # Get result images - handle both camelCase and snake_case
+    result_data = result.get("result", {})
+    images = result_data.get("images", [])
+    if not images:
+        image_url = result_data.get("imageUrl") or result_data.get("image_url")
+        if image_url:
+            images = [{"url": image_url}]
+
+    # Also check for camelCase 'results' array
+    if not images:
+        results = result.get("results", [])
+        if results:
+            images = [{"url": r.get("url")} for r in results if r.get("url")]
+
     if not images:
         print("No result images", file=sys.stderr)
         return 1
@@ -475,7 +461,7 @@ def cmd_image_to_image(args, api_key: str, workspace: Path, safe_output_root: Pa
     resp = _api_request("POST", "/api/v1/open/ai/generations", api_key, data=data)
     result = resp.get("data", {})
     
-    job_id = result.get("jobId") or result.get("job_id") or result.get("task_id")
+    job_id = result.get("job_id") or result.get("task_id") or result.get("jobId")
     if not job_id:
         print("No job ID returned", file=sys.stderr)
         return 1
@@ -488,8 +474,20 @@ def cmd_image_to_image(args, api_key: str, workspace: Path, safe_output_root: Pa
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
     
-    # Get result images - API returns "results" array
-    images = result.get("results", [])
+    # Get result images - handle both camelCase and snake_case
+    result_data = result.get("result", {})
+    images = result_data.get("images", [])
+    if not images:
+        image_url = result_data.get("imageUrl") or result_data.get("image_url")
+        if image_url:
+            images = [{"url": image_url}]
+
+    # Also check for camelCase 'results' array
+    if not images:
+        results = result.get("results", [])
+        if results:
+            images = [{"url": r.get("url")} for r in results if r.get("url")]
+
     if not images:
         print("No result images", file=sys.stderr)
         return 1
@@ -549,24 +547,12 @@ def _prepare_paths(args, workspace: Path, safe_output_root: Path) -> tuple[Path,
 
 
 def _prepare_output_path(output_str: str, workspace: Path, safe_output_root: Path) -> Path:
-    """Prepare output path under safe_output_root.
-
-    - Absolute paths must resolve inside safe_output_root.
-    - Relative paths: if ``workspace / rel`` resolves inside safe_output_root, that path is used
-      (e.g. ``outputs/mopng-api/out.png``). Otherwise the path is taken relative to safe_output_root
-      so ``./cat.jpg`` or ``cat.jpg`` becomes ``.../outputs/mopng-api/cat.jpg``.
-    """
-    raw = Path(output_str).expanduser()
-    if raw.is_absolute():
-        out_path = raw.resolve()
-    else:
-        workspace_candidate = (workspace / raw).resolve()
-        try:
-            workspace_candidate.relative_to(safe_output_root)
-            out_path = workspace_candidate
-        except ValueError:
-            out_path = (safe_output_root / raw).resolve()
-
+    """Prepare output path"""
+    out_path = Path(output_str).expanduser()
+    if not out_path.is_absolute():
+        out_path = workspace / out_path
+    out_path = out_path.resolve()
+    
     _ensure_within(out_path, safe_output_root, "output path")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
