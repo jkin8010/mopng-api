@@ -11,15 +11,32 @@ MoPNG API Skill for OpenClaw - 使用 mopng.cn API 进行图片处理。
 - **文生图** (`text-to-image`) - 从文本描述生成图片
 - **图生图** (`image-to-image`) - 基于参考图生成新图片
 
-## 安装
+## 安装与配置
 
-1. 克隆仓库到 OpenClaw skills 目录
-2. 确保已安装 Python 3.10+ 和 uv
-3. 配置 `MOPNG_API_KEY` 环境变量
+### 1. 安装 Skill（OpenClaw / Claude Code / Cursor）
 
-## 配置
+在对应客户端中执行（对话命令或技能安装入口因产品而异，以各产品文档为准）：
 
-在 OpenClaw 配置文件中设置 API Key：
+```
+/skill add https://raw.githubusercontent.com/jkin8010/mopng-api/refs/heads/main/SKILL.md
+```
+
+**前置依赖：** 本 Skill 需要 `uv` 与 `python3` 已安装；详见仓库根目录 [SKILL.md](https://github.com/jkin8010/mopng-api/blob/main/SKILL.md) 中的 metadata。
+
+### 2. 获取 API Key
+
+1. 打开 [https://mopng.cn/agent](https://mopng.cn/agent) 并登录  
+2. 创建 **API Key**，复制备用  
+
+### 3. 配置 `MOPNG_API_KEY`（告诉助手设置全局环境）
+
+在 AI 输入框中说明你的密钥，便于助手在**全局环境**中写入配置，例如：
+
+> 在全局环境中 `MOPNG_API_KEY='xxxxxxxxxxxx'`
+
+将 `xxxxxxxxxxxx` 替换为你复制的 API Key。
+
+也可在 **OpenClaw** 等支持 JSON 配置的产品中直接写入环境变量：
 
 ```json
 {
@@ -28,6 +45,8 @@ MoPNG API Skill for OpenClaw - 使用 mopng.cn API 进行图片处理。
   }
 }
 ```
+
+**本地开发 / 克隆仓库：** 若从本仓库运行脚本而非远程 Skill，可先克隆仓库，确保 Python 3.10+ 与 `uv` 可用，再在 Shell 或 `.env` 中设置 `MOPNG_API_KEY`。
 
 ## Claude 命令使用示例
 
