@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MoPNG API client for OpenClaw - Image processing via qise.cc"""
+"""MoPNG API client for OpenClaw - Image processing via mopng.cn"""
 
 import argparse
 import json
@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from urllib import error, request, parse
 
-BASE_URL = "https://motu-api.qise.cc"
+BASE_URL = "https://mo-api.mopng.cn"
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_BYTES = 25 * 1024 * 1024
 MAX_DIMENSION = 12000

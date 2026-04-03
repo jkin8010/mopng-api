@@ -1,6 +1,6 @@
 ---
 name: mopng-api
-description: 使用 qise.cc (MoPNG) API 进行图片处理，包括智能抠图、高清放大、智能扩图、图片翻译、文生图、图生图等功能。支持 API Key 鉴权。
+description: 使用 mopng.cn (MoPNG) API 进行图片处理，包括智能抠图、高清放大、智能扩图、图片翻译、文生图、图生图等功能。支持 API Key 鉴权。
 metadata:
   {
     "openclaw": {
@@ -12,12 +12,13 @@ metadata:
 
 # mopng-api
 
-使用 qise.cc (MoPNG) 的 OpenAPI 进行多种图片处理任务。
+使用 mopng.cn (MoPNG) 的 OpenAPI 进行多种图片处理任务。
 
 ## API key setup
 
-1. 登录 https://qise.cc 获取 API Key
-2. 在 OpenClaw 配置中设置 `MOPNG_API_KEY` (`openclaw.json`)
+1. 登录 https://mopng.cn 获取 API Key
+2. **OpenClaw**：在 `openclaw.json` 的 `env` 中设置 `MOPNG_API_KEY`
+3. **Claude Code**：在 `.claude/settings.local.json` 的 `env` 中设置 `MOPNG_API_KEY`，或将变量导出到 shell；安装路径与命令示例见仓库根目录 `README.md` 中的「Claude Code」小节
 
 ## 功能列表
 
