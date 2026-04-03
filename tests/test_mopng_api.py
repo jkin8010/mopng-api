@@ -35,6 +35,42 @@ class TestImageValidation(unittest.TestCase):
         self.assertIsNone(api._detect_image_format(b"NOTANIMAGE"))
 
 
+class TestPrepareOutputPath(unittest.TestCase):
+    """Test _prepare_output_path relative / workspace rules"""
+
+    def test_relative_file_goes_under_safe_root(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            safe = workspace / "outputs" / "mopng-api"
+            safe.mkdir(parents=True)
+            out = api._prepare_output_path("./cat.jpg", workspace, safe)
+            self.assertEqual(out, safe / "cat.jpg")
+
+    def test_outputs_prefix_from_workspace(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            safe = workspace / "outputs" / "mopng-api"
+            safe.mkdir(parents=True)
+            out = api._prepare_output_path(
+                "outputs/mopng-api/nested.png", workspace, safe
+            )
+            self.assertEqual(out, safe / "nested.png")
+
+    def test_absolute_under_safe_ok(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            safe = workspace / "outputs" / "mopng-api"
+            safe.mkdir(parents=True)
+            out = api._prepare_output_path(str(safe / "abs.png"), workspace, safe)
+            self.assertEqual(out, safe / "abs.png")
+
+
 class TestWorkspaceUtils(unittest.TestCase):
     """Test workspace utilities"""
     

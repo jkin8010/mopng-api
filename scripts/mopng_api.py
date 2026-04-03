@@ -549,12 +549,24 @@ def _prepare_paths(args, workspace: Path, safe_output_root: Path) -> tuple[Path,
 
 
 def _prepare_output_path(output_str: str, workspace: Path, safe_output_root: Path) -> Path:
-    """Prepare output path"""
-    out_path = Path(output_str).expanduser()
-    if not out_path.is_absolute():
-        out_path = workspace / out_path
-    out_path = out_path.resolve()
-    
+    """Prepare output path under safe_output_root.
+
+    - Absolute paths must resolve inside safe_output_root.
+    - Relative paths: if ``workspace / rel`` resolves inside safe_output_root, that path is used
+      (e.g. ``outputs/mopng-api/out.png``). Otherwise the path is taken relative to safe_output_root
+      so ``./cat.jpg`` or ``cat.jpg`` becomes ``.../outputs/mopng-api/cat.jpg``.
+    """
+    raw = Path(output_str).expanduser()
+    if raw.is_absolute():
+        out_path = raw.resolve()
+    else:
+        workspace_candidate = (workspace / raw).resolve()
+        try:
+            workspace_candidate.relative_to(safe_output_root)
+            out_path = workspace_candidate
+        except ValueError:
+            out_path = (safe_output_root / raw).resolve()
+
     _ensure_within(out_path, safe_output_root, "output path")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
