@@ -361,8 +361,11 @@ def cmd_remove_bg(args, api_key: str, workspace: Path, safe_output_root: Path) -
     }
     
     resp = _api_request("POST", "/api/v1/open/image/remove-bg", api_key, data=data)
-    result = resp.get("data", {})
-    
+    if resp.get("code") != 0:
+        print(f"Task failed: {resp.get('message', 'unknown')}", file=sys.stderr)
+        return 1
+    result = resp.get("data") or {}
+
     if args.async_mode and result.get("status") in ("pending", "processing"):
         task_id = result.get("task_id")
         print(f"Task {task_id} is {result.get('status')}, polling...")
@@ -400,7 +403,10 @@ def cmd_upscale(args, api_key: str, workspace: Path, safe_output_root: Path) -> 
     }
 
     resp = _api_request("POST", "/api/v1/ai/tools/upscale/photo", api_key, data=data, base_url=UPSCALE_URL)
-    result = resp.get("data", {})
+    if resp.get("code") != 0:
+        print(f"Task failed: {resp.get('message', 'unknown')}", file=sys.stderr)
+        return 1
+    result = resp.get("data") or {}
 
     if args.async_mode and result.get("status") in ("pending", "processing"):
         task_id = result.get("taskId") or result.get("task_id")
@@ -440,18 +446,58 @@ def cmd_outpainting(args, api_key: str, workspace: Path, safe_output_root: Path)
     }
     
     resp = _api_request("POST", "/api/v1/open/image/outpainting", api_key, data=data)
-    result = resp.get("data", {})
-    
-    if result.get("code") != 0:
+    if resp.get("code") != 0:
+        print(f"Task failed: {resp.get('message', 'unknown')}", file=sys.stderr)
+        return 1
+    result = resp.get("data") or {}
+
+    # Sync: immediate URL
+    out_image_url = result.get("image_url")
+    if out_image_url:
+        _download_image(out_image_url, out_path)
+        _print_result(out_path)
+        return 0
+
+    # Async: same generations poll as translation / t2i (POST returns task_id + pending)
+    job_id = result.get("job_id") or result.get("task_id") or result.get("jobId")
+    if result.get("status") in ("pending", "processing") and not job_id:
+        print("No task ID for async outpainting", file=sys.stderr)
+        return 1
+
+    if job_id:
+        if result.get("status") == "failed":
+            print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
+            return 1
+        if result.get("status") != "completed":
+            print(f"Job {job_id} submitted, polling...")
+            result = _poll_task(
+                "/api/v1/open/ai/generations", job_id, api_key, max_retries=120, interval=3
+            )
+
+    if result.get("status") == "failed":
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
-    
-    image_url = result.get("image_url")
-    if not image_url:
+
+    if result.get("status") not in ("completed", None):
+        print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
+        return 1
+
+    result_data = result.get("result", {}) or {}
+    images = result_data.get("images", [])
+    if not images:
+        u = result_data.get("imageUrl") or result_data.get("image_url")
+        if u:
+            images = [{"url": u}]
+    if not images:
+        results = result.get("results", [])
+        if results:
+            images = [{"url": r.get("url")} for r in results if r.get("url")]
+
+    if not images:
         print("No result image URL", file=sys.stderr)
         return 1
-    
-    _download_image(image_url, out_path)
+
+    _download_image(images[0]["url"], out_path)
     _print_result(out_path)
     return 0
 
@@ -474,18 +520,58 @@ def cmd_translation(args, api_key: str, workspace: Path, safe_output_root: Path)
     }
     
     resp = _api_request("POST", "/api/v1/open/image/translation", api_key, data=data)
-    result = resp.get("data", {})
-    
-    if result.get("code") != 0:
+    if resp.get("code") != 0:
+        print(f"Task failed: {resp.get('message', 'unknown')}", file=sys.stderr)
+        return 1
+    result = resp.get("data") or {}
+
+    # Sync response: immediate image URL
+    image_url = result.get("image_url")
+    if image_url:
+        _download_image(image_url, out_path)
+        _print_result(out_path)
+        return 0
+
+    # Async: poll unified generations task endpoint (not /api/v1/open/image/translation/{task_id})
+    job_id = result.get("job_id") or result.get("task_id") or result.get("jobId")
+    if result.get("status") in ("pending", "processing") and not job_id:
+        print("No job ID for async translation task", file=sys.stderr)
+        return 1
+
+    if job_id:
+        if result.get("status") == "failed":
+            print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
+            return 1
+        if result.get("status") != "completed":
+            print(f"Job {job_id} submitted, polling...")
+            result = _poll_task(
+                "/api/v1/open/ai/generations", job_id, api_key, max_retries=120, interval=3
+            )
+
+    if result.get("status") == "failed":
         print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
         return 1
-    
-    image_url = result.get("image_url")
-    if not image_url:
+
+    if result.get("status") not in ("completed", None):
+        print(f"Task failed: {result.get('message', 'unknown')}", file=sys.stderr)
+        return 1
+
+    result_data = result.get("result", {})
+    images = result_data.get("images", [])
+    if not images:
+        u = result_data.get("imageUrl") or result_data.get("image_url")
+        if u:
+            images = [{"url": u}]
+    if not images:
+        results = result.get("results", [])
+        if results:
+            images = [{"url": r.get("url")} for r in results if r.get("url")]
+
+    if not images:
         print("No result image URL", file=sys.stderr)
         return 1
-    
-    _download_image(image_url, out_path)
+
+    _download_image(images[0]["url"], out_path)
     _print_result(out_path)
     return 0
 
