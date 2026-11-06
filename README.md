@@ -1,5 +1,8 @@
 # mopng-api
 
+> **维护与需求**：需求由 MoPNG 产品侧（小明 · CPO）分诊与排序。提需求 / 报问题请直接开 issue：https://github.com/jkin8010/mopng-api/issues
+> —— **72 小时内**给出「接受 / 拒绝 / 待定」三态答复（判「待定」时在 issue 里写明缺什么信息、由谁补、何时回看）。代码实现按单派给开发同学；本仓只做需求分诊，不在这里承诺档期。
+
 面向 OpenClaw 的 MoPNG Agent Skill。它调用 qise-studio `motu-agent` 的公共 OpenAPI，让 UserAgent 与 MoPNG Agent 协商图片生成或修图方案，再由服务端执行功能链。
 
 ## Quickstart
