@@ -2,6 +2,17 @@
 
 面向 OpenClaw 的 MoPNG Agent Skill。它调用 qise-studio `motu-agent` 的公共 OpenAPI，让 UserAgent 与 MoPNG Agent 协商图片生成或修图方案，再由服务端执行功能链。
 
+## Quickstart
+
+```bash
+git clone https://github.com/jkin8010/mopng-api.git && cd mopng-api
+uv sync
+export MOPNG_API_KEY='ak_...'          # 私密配置，不要提交或粘贴到对话
+uv run python scripts/mopng_agent.py models --capability text-to-image
+```
+
+最后一条能打印模型目录，就说明 key 与网络都通了。下一步见「一键协商」。
+
 ## 配置
 
 ```bash
