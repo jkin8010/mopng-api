@@ -147,6 +147,112 @@ def _add_brief_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-time-sec", type=int, default=120)
 
 
+def _collect_text(payload: object) -> str:
+    """Flatten all string/number values of a failure payload into one blob."""
+    parts: list[str] = []
+    stack = [payload]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            parts.append(str(item))
+    return " ".join(parts).lower()
+
+
+# Service-side temporary failures: the safety/moderation backend timed out or
+# errored. Retrying later may work; the content itself was not judged.
+_TRANSIENT_MARKERS = (
+    "timeout", "timed out", "超时", "暂时不可用", "暂不可用", "服务不可用",
+    "不可用", "unavailable", "temporarily", "temporary", "try again later",
+    "请稍后", "稍后重试", "稍后再试", "connection", "connectionerror",
+    "connection reset", "network", "gateway timeout", "internal error",
+    "internal server error", "service error", "upstream", "rate limit",
+    "too many requests", "overloaded", "system busy", "服务异常", "系统繁忙",
+)
+
+# Content was judged and rejected: retrying the same request will not help.
+_REJECTION_MARKERS = (
+    "violat", "unsafe", "not allowed", "prohibited", "forbidden", "banned",
+    "explicit", "nsfw", "sexual", "porn", "nudity", "violence", "gore",
+    "违规", "敏感", "不安全", "禁止", "不通过", "未通过", "未通过检测",
+    "内容不合规", "不合规", "色情", "暴力", "违禁", "驳回",
+)
+
+FAILURE_TRANSIENT = "transient"
+FAILURE_REJECTED = "rejected"
+FAILURE_UNKNOWN = "unknown"
+
+
+def _classify_failure(result: dict) -> str:
+    """Tell a service outage apart from a content rejection.
+
+    Uses signal combination rather than a fixed error-code list: the safety
+    fields are inspected first, then the message texts. Anything we cannot
+    place with confidence stays ``unknown`` and is reported as-is, so an
+    unrecognised code is never silently called a content rejection.
+    """
+    if not isinstance(result, dict):
+        return FAILURE_UNKNOWN
+
+    messages = []
+    for key in ("user_message", "message", "error", "error_message", "detail", "reason"):
+        value = result.get(key)
+        if isinstance(value, str):
+            messages.append(value)
+        elif value is not None:
+            # Nested payloads ({"detail": {"reason": "..."}}) are scanned too.
+            messages.append(value)
+    text = _collect_text(messages) if messages else ""
+
+    # 1. An explicit safety/moderation code means content was judged.
+    safety_code = any(
+        isinstance(result.get(key), str) and "safety" in result[key].lower()
+        for key in ("error_code", "errorCode", "code")
+    )
+    transient = any(marker in text for marker in _TRANSIENT_MARKERS)
+    rejected = any(marker in text for marker in _REJECTION_MARKERS)
+
+    # 2. Transient evidence wins over the generic "safety" label: a safety
+    #    check that timed out did not judge the content (this is the failure
+    #    observed in practice: safety_failed + "内容安全检测服务暂时不可用（超时）").
+    if transient:
+        return FAILURE_TRANSIENT
+    # 3. A safety code with no outage/transient evidence means it was refused.
+    if safety_code:
+        return FAILURE_REJECTED
+    if rejected:
+        return FAILURE_REJECTED
+    return FAILURE_UNKNOWN
+
+
+def _failure_guidance(result: dict) -> str | None:
+    """One-line advice for a failed execution, or None when successful."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("status") not in {"failed", "partial_failed", "terminated"}:
+        return None
+    kind = _classify_failure(result)
+    if kind == FAILURE_TRANSIENT:
+        return (
+            "上游服务临时故障（安全检测/推理服务不可用或超时），不是内容被拒。"
+            "出图步骤未计入费用；请稍后重试，持续失败需要服务端排查。"
+        )
+    if kind == FAILURE_REJECTED:
+        return (
+            "内容未通过服务端安全检测：这是对生成内容的判定结果，原样重试不会通过。"
+            "请调整提示词或参考图后重新规划。"
+        )
+    return (
+        "执行失败；服务端未给出可归类的错误信息，请以原始 error_code/user_message 为准，"
+        "不要自行判定是内容违规还是服务故障。"
+    )
+
+
 def _watch(client: AgentClient, session_id: str, interval: float) -> dict:
     while True:
         result = client.call("GET", f"/session/{session_id}/exec")
@@ -240,6 +346,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             result = _watch(client, args.session_id, args.poll_interval) if args.watch else client.call("GET", f"/session/{args.session_id}/exec")
             _print(result)
+            guidance = _failure_guidance(result)
+            if guidance:
+                print(f"Hint: {guidance}", file=sys.stderr)
         elif args.command == "interrupt":
             _print(client.call("POST", f"/session/{args.session_id}/interrupt"))
         else:

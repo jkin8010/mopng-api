@@ -304,6 +304,76 @@ class TestPlanCostRendering(unittest.TestCase):
         self.assertIsNone(mopng_agent._estimated_cost(None))
 
 
+class TestFailureClassification(unittest.TestCase):
+    """Service outages and content rejections must not be conflated."""
+
+    def test_safety_timeout_is_transient(self):
+        """Real observation: safety_failed + moderation service timed out."""
+        result = {"status": "failed", "error_code": "safety_failed",
+                  "user_message": "内容安全检测服务暂时不可用（超时）"}
+        self.assertEqual(mopng_agent._classify_failure(result), mopng_agent.FAILURE_TRANSIENT)
+
+    def test_safety_violation_is_rejected(self):
+        result = {"status": "failed", "error_code": "safety_failed",
+                  "user_message": "生成内容包含违规信息"}
+        self.assertEqual(mopng_agent._classify_failure(result), mopng_agent.FAILURE_REJECTED)
+
+    def test_english_violation_marker_is_rejected(self):
+        result = {"status": "failed", "user_message": "prompt violates safety policy"}
+        self.assertEqual(mopng_agent._classify_failure(result), mopng_agent.FAILURE_REJECTED)
+
+    def test_transient_marker_wins_over_safety_label(self):
+        result = {"status": "failed", "error_code": "safety_failed",
+                  "user_message": "upstream gateway timeout"}
+        self.assertEqual(mopng_agent._classify_failure(result), mopng_agent.FAILURE_TRANSIENT)
+
+    def test_unknown_code_is_not_called_rejection(self):
+        result = {"status": "failed", "error_code": "weird_xyz",
+                  "user_message": "something went wrong"}
+        self.assertEqual(mopng_agent._classify_failure(result), mopng_agent.FAILURE_UNKNOWN)
+
+    def test_nested_payload_is_scanned(self):
+        result = {"status": "failed", "detail": {"reason": "服务不可用"}}
+        self.assertEqual(mopng_agent._classify_failure(result), mopng_agent.FAILURE_TRANSIENT)
+
+    def test_guidance_only_for_failures(self):
+        self.assertIsNone(mopng_agent._failure_guidance({"status": "success"}))
+        self.assertIsNone(mopng_agent._failure_guidance(None))
+
+    def test_guidance_mentions_content_for_rejection(self):
+        hint = mopng_agent._failure_guidance(
+            {"status": "failed", "error_code": "safety_failed", "user_message": "违规内容"})
+        self.assertIn("内容", hint)
+        self.assertIn("重试不会通过", hint)
+
+    def test_guidance_mentions_retry_for_transient(self):
+        hint = mopng_agent._failure_guidance(
+            {"status": "failed", "error_code": "safety_failed",
+             "user_message": "内容安全检测服务暂时不可用（超时）"})
+        self.assertIn("稍后重试", hint)
+        self.assertIn("不是内容被拒", hint)
+
+    def test_status_command_prints_hint_for_failure(self):
+        result = {"status": "failed", "error_code": "safety_failed",
+                  "user_message": "内容安全检测服务暂时不可用（超时）"}
+        err = []
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                patch.object(mopng_agent.AgentClient, "call", return_value=result), \
+                patch("sys.stdout"), patch("sys.stderr") as stderr:
+            stderr.write = err.append
+            self.assertEqual(mopng_agent.main(["status", "s1"]), 0)
+        self.assertIn("Hint", "".join(str(x) for x in err))
+
+    def test_status_command_silent_on_success(self):
+        err = []
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                patch.object(mopng_agent.AgentClient, "call", return_value={"status": "success"}), \
+                patch("sys.stdout"), patch("sys.stderr") as stderr:
+            stderr.write = err.append
+            mopng_agent.main(["status", "s1"])
+        self.assertEqual("".join(str(x) for x in err), "")
+
+
 class TestNoDirectPaidCommands(unittest.TestCase):
     """Paid endpoints must not be reachable without a reviewed Plan."""
 

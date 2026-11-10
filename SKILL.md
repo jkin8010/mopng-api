@@ -92,6 +92,20 @@ python3 scripts/mopng_agent.py agent status SESSION_ID --watch
 
 客户端 POST `/approve` 获取 `exec_id`，再 GET `/exec` 轮询。成功时交付 `result_image_url`；视觉问答类 Plan 可能返回 `result_text` 而不是图片。简要报告 `steps_log`、实际模型、实际成本、耗时、`ai_labeling` 和可用的 `llm_billing`。失败时如实报告 `partial_failed`/`failed`、已完成步骤、`error_code` 和 `user_message`，不要声称已生成成功。
 
+#### 区分「服务故障」与「内容被拒」
+
+失败时不要一律说成"内容违规"。客户端会输出 `Hint:` 提示，把失败归为三类，请按对应口径转述：
+
+| 类别 | 典型信号 | 正确说法 | 该不该改提示词 |
+|---|---|---|---|
+| **上游临时故障** | `safety_failed` 且文案含"暂时不可用/超时"、`provider_failed` + timeout、connection/5xx | 「服务暂时不可用，请稍后重试」；出图步骤通常不计费 | 不需要——内容并未被判读 |
+| **内容被拒** | `safety_failed` 且文案含违规/敏感/未通过检测，无故障信号 | 「内容未通过服务端安全检测」；原样重试不会通过 | 需要调整提示词或参考图 |
+| **无法归类** | 未知 `error_code`、无可用文案 | 原样转述 `error_code` / `user_message`，不要自行判定 | 先如实反馈，必要时转服务端排查 |
+
+判定规则：**故障信号优先**（例如安全检测服务超时属于上游故障，此时 `safety_failed` 不代表内容违规）；没有故障信号才看安全检测结论。未知错误码一律归入"无法归类"，客户端不会把它当成内容拒绝。
+
+失败时**不要**自动重试付费操作；建议用户稍后手动重跑。
+
 ### 一键模式的批准规则
 
 `agent run` **不会**自动批准任何 Plan，哪怕成本很低。它只创建会话并展示 Plan，然后打印下一步的 `approve` 命令。执行（也就是花钱）只能由用户在看到 Plan 后显式执行 `agent approve SESSION_ID` 触发。
