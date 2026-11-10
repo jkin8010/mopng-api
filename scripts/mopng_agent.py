@@ -8,7 +8,12 @@ import json
 import os
 import sys
 import time
-from urllib import error, parse, request
+from urllib import parse
+
+try:
+    from _http import JsonHttpClient
+except ImportError:  # executed as a module (`python -m scripts.mopng_agent`)
+    from scripts._http import JsonHttpClient
 
 
 DEFAULT_BASE_URL = "https://agent-api.mopng.cn"
@@ -27,33 +32,15 @@ class AgentClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self._http = JsonHttpClient(
+            self.base_url + API_PREFIX,
+            {"Accept": "application/json", "X-API-Key": api_key},
+            timeout,
+            service="motu-agent",
+        )
 
     def call(self, method: str, path: str, body: dict | None = None) -> dict:
-        headers = {"Accept": "application/json", "X-API-Key": self.api_key}
-        data = None
-        if body is not None:
-            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        req = request.Request(
-            f"{self.base_url}{API_PREFIX}{path}",
-            data=data,
-            headers=headers,
-            method=method,
-        )
-        try:
-            with request.urlopen(req, timeout=self.timeout) as response:  # nosec B310 — base URL is operator configuration
-                raw = response.read().decode("utf-8")
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")
-            raise RuntimeError(f"motu-agent HTTP {exc.code}: {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"motu-agent unavailable: {exc.reason}") from exc
-        if not raw:
-            return {}
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("motu-agent returned non-JSON data") from exc
+        return self._http.request(method, path, data=body)
 
 
 def _client(args: argparse.Namespace) -> AgentClient:
