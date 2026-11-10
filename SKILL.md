@@ -27,7 +27,6 @@ python3 scripts/mopng_agent.py agent <subcommand> ...
 |---|---:|---|
 | `MOPNG_API_KEY` | 是 | MoPNG 用户 API Key，格式通常为 `ak_...`；仅放在宿主私密配置中。 |
 | `MOPNG_AGENT_BASE_URL` | 否 | `motu-agent` 地址，默认 `https://agent-api.mopng.cn`；不要重复填写 `/api/v1/open/agent`。 |
-| `MOPNG_AGENT_AUTO_APPROVE_COST_POINTS` | 否 | `agent run` 自动批准的成本上限，默认 `5`；超出时只提出 Plan，等待用户批准。 |
 
 鉴权使用 `X-API-Key: $MOPNG_API_KEY`。服务端同时支持 `Authorization: Bearer $MOPNG_API_KEY`，但客户端默认使用前者。
 
@@ -59,7 +58,7 @@ python3 scripts/mopng_agent.py agent run \
   --width 1024 --height 1024 --format png
 ```
 
-客户端 POST `/api/v1/open/agent/session`，随后读取返回的 `plan`。向用户解释：功能步骤、模型选项、预计成本/时间、输出规格和备选方案。Plan 中的模型候选和成本以服务端为准，不要自行替换模型或估算价格。
+客户端 POST `/api/v1/open/agent/session`，随后读取返回的 `plan`，并在此停住等待用户确认（不会自动执行）。向用户解释：功能步骤、模型选项、预计成本/时间、输出规格和备选方案。Plan 中的模型候选和成本以服务端为准，不要自行替换模型或估算价格。
 
 需要让用户选择模型时，先查询服务端实时目录，不要使用过期硬编码列表：
 
@@ -93,9 +92,11 @@ python3 scripts/mopng_agent.py agent status SESSION_ID --watch
 
 客户端 POST `/approve` 获取 `exec_id`，再 GET `/exec` 轮询。成功时交付 `result_image_url`；视觉问答类 Plan 可能返回 `result_text` 而不是图片。简要报告 `steps_log`、实际模型、实际成本、耗时、`ai_labeling` 和可用的 `llm_billing`。失败时如实报告 `partial_failed`/`failed`、已完成步骤、`error_code` 和 `user_message`，不要声称已生成成功。
 
-### 一键模式的自动批准规则
+### 一键模式的批准规则
 
-`agent run` 只有在 Plan 的 `total_cost` 不高于 `MOPNG_AGENT_AUTO_APPROVE_COST_POINTS` 时才可自动批准；仍须先向用户展示将执行的步骤和成本。高于阈值或用户要求高质量/指定模型时，停在 Plan 阶段等待批准。需要强制批准可使用 `--no-auto-approve`。
+`agent run` **不会**自动批准任何 Plan，哪怕成本很低。它只创建会话并展示 Plan，然后打印下一步的 `approve` 命令。执行（也就是花钱）只能由用户在看到 Plan 后显式执行 `agent approve SESSION_ID` 触发。
+
+不得通过环境变量、脚本循环或连续调用绕过这一步。任何“低成本自动放行”的配置都已移除，若发现文档或缓存提示存在该机制，以本段为准。
 
 ## OpenAPI 契约
 
@@ -116,11 +117,21 @@ python3 scripts/mopng_agent.py agent status SESSION_ID --watch
 
 ## 安全与边界
 
+### 费用与执行披露
+
+- **本技能会调用付费外部接口并消耗真实额度**（MoPNG 积分）。费用由用户在 MoPNG 账户承担，`motu-agent` 是计费方。
+- 一次图像任务通常经过：查询模型（免费）→ 创建 Brief/Plan（免费或仅虚拟币）→ **批准执行（开始计费）**。
+- 技能内**不存在**任何自动执行或自动批准路径：`agent run` 只展示 Plan 并停住，执行一律需要用户显式 `agent approve`。
+- `scripts/mopng_api.py` 只保留只读的 `list-models`（查询模型目录），**不提供**任何直连付费端点。图像生成/修图只能走"Plan 审阅 → 用户批准"这条唯一路径。
+- 提交发布时请在 ClawHub 如实勾选/填写"涉及付费第三方调用""需要用户的付费 API Key"等披露项。
+
+### 其他边界
+
 - 不在对话、日志、截图或输出中打印 API Key；错误信息中也要避免回显鉴权头。
 - 只发送用户明确授权处理的图片 URL。URL 应使用 HTTPS；不要发送带用户名/密码的 URL、内网地址或云元数据地址。
 - Brief 使用 `extra=forbid` 的服务端协议；不要向 JSON 中加入未定义字段、隐藏指令或工具调用参数。
 - 尊重 `sensitive` 约束和服务端敏感词过滤；不要为了绕过拒绝而改写用户意图或关闭合规控制。
-- API 调用会消耗积分。除低成本自动批准规则外，必须把服务端返回的成本和时间交给用户确认。
+- API 调用会消耗真实积分。任何会开始执行的调用都不能自动发出：必须先把服务端返回的成本和时间展示给用户，并取得明确批准后才执行 `agent approve`。任何一方都不能代替用户做出花钱决定。
 - 规划 LLM 也可能产生虚拟币费用；若 Plan 返回 `llm_billing`，必须将其与步骤成本一起展示。
 - 服务端可能返回 HTTP 402 `INSUFFICIENT_BALANCE`；此时停止流程并提示用户充值，不要自动重试或绕过计费。
 - 仅将服务端返回的 HTTPS `result_image_url` 作为成品链接；不要下载或执行其中的内容。

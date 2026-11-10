@@ -8,71 +8,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
+import _http
+
 # Add repo root and scripts to path: entry points resolve their sibling helpers
 # (`_http`) on the scripts dir, tests patch third-party modules (urllib) as loaded.
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 import mopng_api as api
-
-
-class TestImageValidation(unittest.TestCase):
-    """Test image validation functions"""
-    
-    def test_detect_png(self):
-        """Test PNG format detection"""
-        png_header = b"\x89PNG\r\n\x1a\n"
-        self.assertEqual(api._detect_image_format(png_header), "png")
-    
-    def test_detect_jpeg(self):
-        """Test JPEG format detection"""
-        jpeg_header = b"\xff\xd8\xff\xe0\x00\x10JFIF"
-        self.assertEqual(api._detect_image_format(jpeg_header), "jpeg")
-    
-    def test_detect_webp(self):
-        """Test WEBP format detection"""
-        webp_header = b"RIFF\x00\x00\x00\x00WEBPVP8 "
-        self.assertEqual(api._detect_image_format(webp_header), "webp")
-    
-    def test_detect_unknown(self):
-        """Test unknown format detection"""
-        self.assertIsNone(api._detect_image_format(b"NOTANIMAGE"))
-
-
-class TestPrepareOutputPath(unittest.TestCase):
-    """Test _prepare_output_path relative / workspace rules"""
-
-    def test_relative_file_goes_under_safe_root(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
-            safe = workspace / "outputs" / "mopng-api"
-            safe.mkdir(parents=True)
-            out = api._prepare_output_path("./cat.jpg", workspace, safe)
-            self.assertEqual(out, safe / "cat.jpg")
-
-    def test_outputs_prefix_from_workspace(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
-            safe = workspace / "outputs" / "mopng-api"
-            safe.mkdir(parents=True)
-            out = api._prepare_output_path(
-                "outputs/mopng-api/nested.png", workspace, safe
-            )
-            self.assertEqual(out, safe / "nested.png")
-
-    def test_absolute_under_safe_ok(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp).resolve()
-            safe = workspace / "outputs" / "mopng-api"
-            safe.mkdir(parents=True)
-            out = api._prepare_output_path(str(safe / "abs.png"), workspace, safe)
-            self.assertEqual(out, safe / "abs.png")
 
 
 class TestUrlValidation(unittest.TestCase):
@@ -214,7 +157,7 @@ class TestApiBaseUrlConfig(unittest.TestCase):
 class TestAPIRequest(unittest.TestCase):
     """Test API request functionality"""
     
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_success(self, mock_urlopen):
         """Test successful API request"""
         mock_response = MagicMock()
@@ -224,7 +167,7 @@ class TestAPIRequest(unittest.TestCase):
         result = api._api_request("GET", "/test", "test_key")
         self.assertEqual(result["code"], 0)
     
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_error(self, mock_urlopen):
         """Test API request error"""
         from urllib.error import HTTPError
@@ -235,7 +178,7 @@ class TestAPIRequest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             api._api_request("GET", "/test", "test_key")
 
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_network_error_is_runtime_error(self, mock_urlopen):
         """Network failures must surface as RuntimeError, not leak URLError."""
         from urllib.error import URLError
@@ -245,7 +188,7 @@ class TestAPIRequest(unittest.TestCase):
             api._api_request("GET", "/test", "test_key")
         self.assertIn("unavailable", str(ctx.exception))
 
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_http_error_message_from_json(self, mock_urlopen):
         from urllib.error import HTTPError
         mock_urlopen.side_effect = HTTPError(
@@ -257,7 +200,7 @@ class TestAPIRequest(unittest.TestCase):
             api._api_request("GET", "/test", "test_key")
         self.assertEqual(str(ctx.exception), "MoPNG API API error: invalid key")
 
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_http_error_non_json_body(self, mock_urlopen):
         from urllib.error import HTTPError
         mock_urlopen.side_effect = HTTPError(
@@ -268,7 +211,7 @@ class TestAPIRequest(unittest.TestCase):
             api._api_request("GET", "/test", "test_key")
         self.assertEqual(str(ctx.exception), "MoPNG API HTTP 503: boom")
 
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_non_json_success_body(self, mock_urlopen):
         mock_response = MagicMock()
         mock_response.read.return_value = b"<html>"
@@ -278,7 +221,7 @@ class TestAPIRequest(unittest.TestCase):
             api._api_request("GET", "/test", "test_key")
         self.assertIn("non-JSON", str(ctx.exception))
 
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_sends_bearer_auth_to_given_base_url(self, mock_urlopen):
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"code": 0}'
@@ -290,7 +233,7 @@ class TestAPIRequest(unittest.TestCase):
         self.assertEqual(req.full_url, "https://alt.example/test")
         self.assertEqual(req.get_header("Authorization"), "Bearer secret")
 
-    @patch('mopng_api.request.urlopen')
+    @patch('_http.request.urlopen')
     def test_api_request_uploads_multipart_file(self, mock_urlopen):
         import tempfile
 
@@ -306,103 +249,6 @@ class TestAPIRequest(unittest.TestCase):
         req = mock_urlopen.call_args.args[0]
         self.assertTrue(req.get_header("Content-type").startswith("multipart/form-data"))
         self.assertIn(b'filename="pic.png"', req.data)
-
-
-class TestPollTask(unittest.TestCase):
-    """Test task polling functionality"""
-    
-    @patch('mopng_api._api_request')
-    def test_poll_task_completed(self, mock_request):
-        """Test polling until completed"""
-        mock_request.return_value = {
-            "data": {"status": "completed", "result": {"imageUrl": "https://example.com/img.png"}}
-        }
-        
-        result = api._poll_task("/tasks", "task-123", "test_key", max_retries=1)
-        self.assertEqual(result["status"], "completed")
-    
-    @patch('mopng_api._api_request')
-    def test_poll_task_failed(self, mock_request):
-        """Test polling task failed"""
-        mock_request.return_value = {
-            "data": {"status": "failed", "message": "Processing error"}
-        }
-        
-        with self.assertRaises(RuntimeError) as ctx:
-            api._poll_task("/tasks", "task-123", "test_key", max_retries=1, interval=0)
-        self.assertIn("failed", str(ctx.exception))
-
-
-class TestDownloadImage(unittest.TestCase):
-    """Test image download functionality"""
-    
-    @patch('mopng_api.request.urlopen')
-    def test_download_image(self, mock_urlopen):
-        """Test image download"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"fake_image_data"
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-        
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "test.png"
-            api._download_image("https://example.com/img.png", output_path)
-            self.assertTrue(output_path.exists())
-            self.assertEqual(output_path.read_bytes(), b"fake_image_data")
-
-
-class TestCommandArguments(unittest.TestCase):
-    """Test command argument parsing"""
-    
-    def test_remove_bg_args(self):
-        """Test remove-bg argument parsing"""
-        import argparse
-        parser = argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest="command")
-        cmd = sub.add_parser("remove-bg")
-        cmd.add_argument("--input", "-i", required=True)
-        cmd.add_argument("--output", "-o", required=True)
-        cmd.add_argument("--output-format", default="png")
-        cmd.add_argument("--async-mode", action="store_true")
-        cmd.add_argument("--return-mask", action="store_true")
-        cmd.add_argument("--only-mask", action="store_true")
-        
-        args = parser.parse_args(["remove-bg", "-i", "test.jpg", "-o", "out.png"])
-        self.assertEqual(args.input, "test.jpg")
-        self.assertEqual(args.output, "out.png")
-        self.assertEqual(args.output_format, "png")
-    
-    def test_upscale_args(self):
-        """Test upscale argument parsing"""
-        import argparse
-        parser = argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest="command")
-        cmd = sub.add_parser("upscale")
-        cmd.add_argument("--input", "-i", required=True)
-        cmd.add_argument("--output", "-o", required=True)
-        cmd.add_argument("--scale", type=int, default=2)
-        
-        args = parser.parse_args(["upscale", "-i", "test.jpg", "-o", "out.png", "--scale", "4"])
-        self.assertEqual(args.scale, 4)
-    
-    def test_text_to_image_args(self):
-        """Test text-to-image argument parsing"""
-        import argparse
-        parser = argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest="command")
-        cmd = sub.add_parser("text-to-image")
-        cmd.add_argument("--prompt", "-p", required=True)
-        cmd.add_argument("--output", "-o", required=True)
-        cmd.add_argument("--model", default="wanx-v2.5")
-        
-        args = parser.parse_args([
-            "text-to-image", 
-            "-p", "a cat", 
-            "-o", "out.png",
-            "--model", "wanx-v2"
-        ])
-        self.assertEqual(args.prompt, "a cat")
-        self.assertEqual(args.model, "wanx-v2")
 
 
 class TestEnvironment(unittest.TestCase):

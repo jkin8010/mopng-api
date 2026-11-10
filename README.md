@@ -25,11 +25,14 @@ export MOPNG_AGENT_BASE_URL='https://agent-api.mopng.cn'
 
 `MOPNG_AGENT_BASE_URL` 默认是 `https://agent-api.mopng.cn`。客户端会自动请求 `/api/v1/open/agent`，鉴权头为 `X-API-Key`。
 
-查询服务端当前模型目录：
+查询服务端当前模型目录（只读、免费）：
 
 ```bash
 python3 scripts/mopng_agent.py models --capability text-to-image
+python3 scripts/mopng_api.py list-models
 ```
+
+`scripts/mopng_api.py` 只提供只读查询。所有图像生成/修图操作都必须走 `mopng_agent.py` 的「Plan 审阅 → 用户批准 → 执行」流程，没有任何绕过批准直接下单的入口。
 
 ## 一键协商
 
@@ -42,7 +45,7 @@ python3 scripts/mopng_agent.py run \
   --reference-url 'https://example.com/product.png' \
   --usage '电商主图' \
   --style-constraint '纯白背景，产品边缘干净' \
-  --width 1024 --height 1024 --watch
+  --width 1024 --height 1024
 ```
 
 纯文生图不传 `--reference-url`：
@@ -50,10 +53,16 @@ python3 scripts/mopng_agent.py run \
 ```bash
 python3 scripts/mopng_agent.py run \
   --intent '生成一张电影感的橘猫宇航员海报' \
-  --goal '文生图' --usage '海报' --watch
+  --goal '文生图' --usage '海报'
 ```
 
-低于 `MOPNG_AGENT_AUTO_APPROVE_COST_POINTS`（默认 5 点）的方案会自动批准；其他方案停在 Plan 阶段，需显式执行 `approve`。
+`run` **不会**自动执行，也不会替你批准：它创建会话、展示 Plan，然后打印成本与下一步命令。真正开始计费必须由你显式执行：
+
+```bash
+python3 scripts/mopng_agent.py approve SESSION_ID
+```
+
+> **费用披露**：图像任务会调用付费接口并消耗 MoPNG 积分。查询模型目录（`models` / `list-models`）不产生费用；批准 Plan 后才开始计费。
 
 ## 手动协商
 

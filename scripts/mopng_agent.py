@@ -127,12 +127,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Call motu-agent MoPNG Agent OpenAPI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="create a Brief and optionally auto-approve a cheap Plan")
+    run = sub.add_parser("run", help="create a Brief and show its Plan for review")
     _add_common(run)
     _add_brief_args(run)
-    run.add_argument("--no-auto-approve", action="store_true")
-    run.add_argument("--watch", action="store_true")
-    run.add_argument("--poll-interval", type=float, default=3)
 
     brief = sub.add_parser("brief", help="create a session and return its Plan")
     _add_common(brief)
@@ -175,17 +172,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"run", "brief"}:
             result = client.call("POST", "/session", _brief(args))
             _print(result)
-            if args.command == "run" and not args.no_auto_approve:
-                plan_data = result.get("plan", {})
-                threshold = int(os.getenv("MOPNG_AGENT_AUTO_APPROVE_COST_POINTS", "5"))
+            if args.command == "run":
+                # Never approve on the user's behalf: `run` only prepares the
+                # session and shows the Plan. Spending requires an explicit
+                # `approve` call made by the user.
+                plan_data = result.get("plan") or {}
+                cost = plan_data.get("total_cost")
                 llm_billing = plan_data.get("llm_billing") or {}
-                total_estimated_cost = plan_data.get("total_cost", threshold + 1) + llm_billing.get("cost_virtual", 0)
-                if total_estimated_cost <= threshold:
-                    session_id = result["session_id"]
-                    approved = client.call("POST", f"/session/{session_id}/approve")
-                    _print(approved)
-                    if args.watch:
-                        _print(_watch(client, session_id, args.poll_interval))
+                estimated = None
+                if cost is not None:
+                    estimated = cost + (llm_billing.get("cost_virtual") or 0)
+                session_id = result.get("session_id")
+                if estimated is None:
+                    print("Plan cost unavailable; review and approve manually.", file=sys.stderr)
+                else:
+                    print(f"Estimated cost: {estimated} points. Review the Plan above, then run:")
+                    print(f"  python3 scripts/mopng_agent.py approve {session_id}")
         elif args.command == "plan":
             _print(client.call("GET", f"/session/{args.session_id}/plan"))
         elif args.command == "models":

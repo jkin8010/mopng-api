@@ -11,6 +11,7 @@ SCRIPT_DIR = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import _http
+import mopng_api
 import mopng_agent
 
 
@@ -199,6 +200,87 @@ class TestModuleImportModes(unittest.TestCase):
         self.assertEqual(
             Path(module.__file__).resolve(), Path(_http.__file__).resolve()
         )
+
+
+class TestNoAutoApprove(unittest.TestCase):
+    """`run` must never spend money on the user's behalf."""
+
+    def _brief_argv(self, *extra):
+        return ["run", "--intent", "i", "--goal", "g", *extra]
+
+    def test_run_never_calls_approve(self):
+        """Even a cheap Plan must stop for explicit user approval."""
+        cheap_plan = {
+            "session_id": "s1",
+            "plan": {"total_cost": 0, "llm_billing": {"cost_virtual": 0}},
+        }
+        calls = []
+
+        def fake_call(self, method, path, body=None):
+            calls.append((method, path))
+            return cheap_plan
+
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k", "MOPNG_AGENT_AUTO_APPROVE_COST_POINTS": "999"}), \
+                patch.object(mopng_agent.AgentClient, "call", fake_call), \
+                patch("sys.stdout"):
+            rc = mopng_agent.main(self._brief_argv())
+
+        self.assertEqual(rc, 0)
+        paths = [p for _, p in calls]
+        self.assertNotIn("/session/s1/approve", paths)
+        self.assertEqual(paths, ["/session"])
+
+    def test_run_prints_approve_instruction(self):
+        plan = {"session_id": "s2", "plan": {"total_cost": 3, "llm_billing": {"cost_virtual": 1}}}
+        out = []
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                patch.object(mopng_agent.AgentClient, "call", return_value=plan), \
+                patch("sys.stdout") as stdout:
+            stdout.write = out.append
+            mopng_agent.main(self._brief_argv())
+        text = "".join(str(x) for x in out)
+        self.assertIn("4", text)          # total_cost + cost_virtual
+        self.assertIn("approve s2", text)
+
+    def test_no_auto_approve_flag_is_gone(self):
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                patch("sys.stderr"), \
+                self.assertRaises(SystemExit):
+            mopng_agent.main(self._brief_argv("--no-auto-approve"))
+
+    def test_auto_approve_env_var_is_not_read(self):
+        source = Path(mopng_agent.__file__).read_text()
+        self.assertNotIn("AUTO_APPROVE", source)
+
+
+class TestNoDirectPaidCommands(unittest.TestCase):
+    """Paid endpoints must not be reachable without a reviewed Plan."""
+
+    PAID = ("remove-bg", "upscale", "outpainting", "translation", "text-to-image", "image-to-image")
+
+    def test_cli_rejects_paid_commands(self):
+        for command in self.PAID:
+            with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                    patch("sys.stderr"), \
+                    self.assertRaises(SystemExit):
+                mopng_api.main([command])
+
+    def test_module_defines_no_paid_command_handlers(self):
+        for name in ("cmd_remove_bg", "cmd_upscale", "cmd_outpainting",
+                     "cmd_translation", "cmd_text_to_image", "cmd_image_to_image"):
+            self.assertFalse(hasattr(mopng_api, name), name)
+
+    def test_module_has_no_paid_endpoints(self):
+        source = Path(mopng_api.__file__).read_text()
+        for endpoint in ("/open/image/", "/ai/generations", "/images/upload", "/ai/tools/"):
+            self.assertNotIn(endpoint, source, endpoint)
+
+    def test_list_models_is_read_only(self):
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                patch.object(mopng_api, "_api_request", return_value={"data": {"models": []}}) as req, \
+                patch("sys.stdout"):
+            self.assertEqual(mopng_api.main(["list-models"]), 0)
+        self.assertEqual(req.call_args.args[0], "GET")
 
 
 if __name__ == "__main__":
