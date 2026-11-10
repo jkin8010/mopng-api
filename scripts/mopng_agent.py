@@ -50,6 +50,45 @@ def _client(args: argparse.Namespace) -> AgentClient:
     return AgentClient(os.getenv("MOPNG_AGENT_BASE_URL", DEFAULT_BASE_URL), key, args.timeout)
 
 
+def _as_number(value: object) -> float | None:
+    """Coerce a plan amount to a number.
+
+    The service sends mixed types: ``total_cost`` arrives as an int while
+    ``llm_billing.cost_virtual`` arrives as a decimal string ("0.23"). Adding
+    them directly raised TypeError, so normalise everything here.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _estimated_cost(plan: object) -> float | None:
+    """Estimated points for a Plan: step cost plus planning virtual cost."""
+    if not isinstance(plan, dict):
+        return None
+    total = _as_number(plan.get("total_cost"))
+    if total is None:
+        return None
+    llm_billing = plan.get("llm_billing")
+    cost_virtual = _as_number(llm_billing.get("cost_virtual")) if isinstance(llm_billing, dict) else None
+    return total + (cost_virtual or 0.0)
+
+
+def _format_points(value: float) -> str:
+    """Render points without a trailing ``.0`` for whole numbers."""
+    return str(int(value)) if float(value).is_integer() else f"{value:.2f}".rstrip("0").rstrip(".")
+
+
 def _brief(args: argparse.Namespace) -> dict:
     references = args.reference_url or []
     if len(references) > 14:
@@ -176,17 +215,12 @@ def main(argv: list[str] | None = None) -> int:
                 # Never approve on the user's behalf: `run` only prepares the
                 # session and shows the Plan. Spending requires an explicit
                 # `approve` call made by the user.
-                plan_data = result.get("plan") or {}
-                cost = plan_data.get("total_cost")
-                llm_billing = plan_data.get("llm_billing") or {}
-                estimated = None
-                if cost is not None:
-                    estimated = cost + (llm_billing.get("cost_virtual") or 0)
                 session_id = result.get("session_id")
+                estimated = _estimated_cost(result.get("plan"))
                 if estimated is None:
                     print("Plan cost unavailable; review and approve manually.", file=sys.stderr)
                 else:
-                    print(f"Estimated cost: {estimated} points. Review the Plan above, then run:")
+                    print(f"Estimated cost: {_format_points(estimated)} points. Review the Plan above, then run:")
                     print(f"  python3 scripts/mopng_agent.py approve {session_id}")
         elif args.command == "plan":
             _print(client.call("GET", f"/session/{args.session_id}/plan"))

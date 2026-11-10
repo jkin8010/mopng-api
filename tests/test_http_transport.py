@@ -253,6 +253,57 @@ class TestNoAutoApprove(unittest.TestCase):
         self.assertNotIn("AUTO_APPROVE", source)
 
 
+class TestPlanCostRendering(unittest.TestCase):
+    """Plan amounts arrive as mixed types; rendering must never crash."""
+
+    def _run(self, plan):
+        out, err = [], []
+        with patch.dict("os.environ", {"MOPNG_API_KEY": "k"}), \
+                patch.object(mopng_agent.AgentClient, "call",
+                             return_value={"session_id": "s1", "plan": plan}), \
+                patch("sys.stdout") as stdout, patch("sys.stderr") as stderr:
+            stdout.write = out.append
+            stderr.write = err.append
+            rc = mopng_agent.main(["run", "--intent", "i", "--goal", "g"])
+        return rc, "".join(str(x) for x in out), "".join(str(x) for x in err)
+
+    def test_string_cost_virtual_does_not_crash(self):
+        """Regression: total_cost int + cost_virtual str raised TypeError."""
+        rc, out, _ = self._run({"total_cost": 0, "llm_billing": {"cost_virtual": "0.23"}})
+        self.assertEqual(rc, 0)
+        self.assertIn("0.23", out)
+
+    def test_int_plus_string_sums(self):
+        _, out, _ = self._run({"total_cost": 2, "llm_billing": {"cost_virtual": "0.16"}})
+        self.assertIn("2.16", out)
+
+    def test_whole_number_has_no_decimal_suffix(self):
+        _, out, _ = self._run({"total_cost": 2})
+        self.assertIn("Estimated cost: 2 points", out)
+
+    def test_missing_cost_virtual_is_ignored(self):
+        _, out, _ = self._run({"total_cost": 2, "llm_billing": {"cost_virtual": None}})
+        self.assertIn("Estimated cost: 2 points", out)
+
+    def test_garbage_cost_virtual_is_ignored(self):
+        rc, out, _ = self._run({"total_cost": 2, "llm_billing": {"cost_virtual": "N/A"}})
+        self.assertEqual(rc, 0)
+        self.assertIn("Estimated cost: 2 points", out)
+
+    def test_missing_total_cost_falls_back_to_manual_review(self):
+        rc, out, err = self._run({"llm_billing": {"cost_virtual": "0.2"}})
+        self.assertEqual(rc, 0)
+        self.assertIn("unavailable", err)
+        self.assertNotIn("Estimated cost", out)
+
+    def test_bool_is_not_treated_as_number(self):
+        self.assertIsNone(mopng_agent._as_number(True))
+
+    def test_plan_not_a_dict(self):
+        self.assertIsNone(mopng_agent._estimated_cost(["not", "a", "dict"]))
+        self.assertIsNone(mopng_agent._estimated_cost(None))
+
+
 class TestNoDirectPaidCommands(unittest.TestCase):
     """Paid endpoints must not be reachable without a reviewed Plan."""
 
